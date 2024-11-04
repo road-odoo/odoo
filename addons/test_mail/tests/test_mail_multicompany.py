@@ -9,6 +9,7 @@ from freezegun import freeze_time
 from unittest.mock import patch
 from werkzeug.urls import url_parse, url_decode
 
+from odoo import Command
 from odoo.addons.mail.models.mail_message import Message
 from odoo.addons.mail.tests.common import MailCommon
 from odoo.addons.test_mail.models.test_mail_corner_case_models import MailTestMultiCompanyWithActivity
@@ -387,6 +388,43 @@ class TestMultiCompanySetup(TestMailMCCommon, HttpCase):
                     })["Store"]["activityGroups"]
                     other_activity_group = next(ag for ag in activity_groups if ag['model'] == 'mail.activity')
                     self.assertEqual(other_activity_group["total_count"], 5)
+
+    def test_cross_company_partner_mention(self):
+        """Test mentioning a partner with no common company."""
+        current_company, target_company = self.env["res.company"].create(
+            [{"name": "Current Company"}, {"name": "Target Company"}]
+        )
+        current_user, target_user = self.env["res.users"].create(
+            [
+                {
+                    "company_ids": [Command.link(current_company.id)],
+                    "company_id": current_company.id,
+                    "email": "current@example.com",
+                    "login": "Current User",
+                    "name": "Current User",
+                    "notification_type": "inbox",
+                },
+                {
+                    "company_ids": [Command.link(target_company.id)],
+                    "company_id": target_company.id,
+                    "email": "target@example.com",
+                    "login": "Target User",
+                    "name": "Target User",
+                    "notification_type": "inbox",
+                },
+            ]
+        )
+        thread = self.env["res.partner"].create({"name": "Test Partner"})
+        self._reset_bus()
+        with self.assertBus([(self.cr.dbname, "res.partner", target_user.partner_id.id)]):
+            thread.with_user(current_user).with_context(
+                allowed_company_ids=current_company.ids
+            ).message_post(
+                body="Hello @Target User",
+                message_type="comment",
+                partner_ids=target_user.partner_id.ids,
+                subtype_xmlid="mail.mt_comment",
+            )
 
 
 @tagged('-at_install', 'post_install', 'multi_company')
